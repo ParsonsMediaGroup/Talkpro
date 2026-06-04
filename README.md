@@ -46,6 +46,12 @@ TalkPro does not ship with an API key and does not include one in the source cod
 
 When a user enters an OpenAI API key, it is stored only in that user's local app settings on their computer. AI dictation sends recorded audio to OpenAI for transcription. AI improvement sends the transcript, vocabulary list, and improvement prompt to OpenAI. Dictation history is stored locally in the app and can be exported as JSON.
 
+## Security Warnings
+
+TalkPro is open source. Early builds are unsigned, so antivirus or endpoint security tools may warn because the app uses global hotkeys, microphone access, clipboard access, and optional auto-paste. These behaviors are required for desktop dictation.
+
+If you are unsure, review the source code, build it locally, or ask someone technical to audit it before running a downloaded binary.
+
 ## Development
 
 ```powershell
