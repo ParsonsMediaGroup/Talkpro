@@ -18,7 +18,9 @@ GitHub description:
 
 ## Prompt-Based Improvement
 
-Users can enable AI improvement and write their own prompt. This is intended for project-specific context, such as:
+Users can create multiple dictation profiles. Each profile can have its own hotkey, transcription model, improvement model, vocabulary, and prompt. This makes it possible to keep separate dictation "personalities" for code review, support replies, notes, documentation, or casual writing.
+
+AI improvement prompts are intended for project-specific context, such as:
 
 - Acronyms like `SSH`, `API`, `URL`, and `JSON`.
 - Codebase names, file names, commands, APIs, and framework terms.
@@ -27,6 +29,16 @@ Users can enable AI improvement and write their own prompt. This is intended for
 - Writing rules such as "preserve technical terms" or "format this as a GitHub comment."
 
 The improvement prompt runs after transcription and before clipboard/paste/history.
+
+## Macro Keys
+
+TalkPro hotkeys can be bound to shortcuts such as `Ctrl+Alt+1`, `Ctrl+Alt+2`, or `Command+Option+1`.
+
+For Razer, Logitech, Corsair, Elgato, and similar macro keyboards, configure each macro key in the vendor app to emit a normal shortcut, then bind that shortcut to a TalkPro profile. For example:
+
+- M1 -> `Ctrl+Alt+1` -> Default profile
+- M2 -> `Ctrl+Alt+2` -> Codebase profile
+- M3 -> `Ctrl+Alt+3` -> Support reply profile
 
 ## Privacy
 

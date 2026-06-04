@@ -239,6 +239,15 @@ kbd {
   grid-column: 1 / -1;
 }
 
+.profile-select-field {
+  min-width: 0;
+}
+
+.profile-actions {
+  display: flex;
+  align-items: end;
+}
+
 .toggle {
   display: flex;
   align-items: center;

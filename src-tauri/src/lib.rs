@@ -22,10 +22,18 @@ use tauri::{
 const OPENAI_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
 const OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HotkeyProfile {
+    id: String,
+    hotkey: String,
+}
+
 #[derive(Default)]
 struct HotkeyState {
     pressed_keys: HashSet<Key>,
-    recording: bool,
+    active_profile_id: Option<String>,
+    profiles: Vec<HotkeyProfile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,8 +235,21 @@ fn create_desktop_shortcut() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn register_hotkeys(profiles: Vec<HotkeyProfile>, state: tauri::State<Arc<Mutex<HotkeyState>>>) {
+    if let Ok(mut hotkey_state) = state.lock() {
+        hotkey_state.profiles = profiles
+            .into_iter()
+            .filter(|profile| !profile.id.trim().is_empty() && !profile.hotkey.trim().is_empty())
+            .collect();
+    }
+}
+
 pub fn run() {
+    let hotkey_state = Arc::new(Mutex::new(HotkeyState::default()));
+
     tauri::Builder::default()
+        .manage(Arc::clone(&hotkey_state))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
@@ -238,11 +259,12 @@ pub fn run() {
             transcribe_audio,
             improve_text,
             save_history_export,
-            create_desktop_shortcut
+            create_desktop_shortcut,
+            register_hotkeys
         ])
         .setup(|app| {
             create_tray_icon(app)?;
-            start_modifier_hotkey_listener(app.handle().clone());
+            start_modifier_hotkey_listener(app.handle().clone(), hotkey_state);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -295,9 +317,8 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-fn start_modifier_hotkey_listener(app: AppHandle) {
+fn start_modifier_hotkey_listener(app: AppHandle, state: Arc<Mutex<HotkeyState>>) {
     thread::spawn(move || {
-        let state = Arc::new(Mutex::new(HotkeyState::default()));
         let listener_state = Arc::clone(&state);
 
         let callback = move |event: Event| {
@@ -315,20 +336,31 @@ fn start_modifier_hotkey_listener(app: AppHandle) {
                 _ => return,
             }
 
-            let control_down = state.pressed_keys.contains(&Key::ControlLeft)
-                || state.pressed_keys.contains(&Key::ControlRight);
-            let meta_down = state.pressed_keys.contains(&Key::MetaLeft)
-                || state.pressed_keys.contains(&Key::MetaRight);
-            let alt_down = state.pressed_keys.contains(&Key::Alt)
-                || state.pressed_keys.contains(&Key::AltGr);
-            let should_record = default_primary_modifier_down(control_down, meta_down) && alt_down;
+            if let Some(active_profile_id) = state.active_profile_id.clone() {
+                let active_profile = state
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.id == active_profile_id);
+                let should_continue = active_profile
+                    .map(|profile| hotkey_matches(&state.pressed_keys, &profile.hotkey))
+                    .unwrap_or(false);
 
-            if should_record && !state.recording {
-                state.recording = true;
-                let _ = app.emit("talkpro://record-start", ());
-            } else if !should_record && state.recording {
-                state.recording = false;
-                let _ = app.emit("talkpro://record-stop", ());
+                if !should_continue {
+                    state.active_profile_id = None;
+                    let _ = app.emit("talkpro://record-stop", active_profile_id);
+                }
+                return;
+            }
+
+            let matched_profile = state
+                .profiles
+                .iter()
+                .find(|profile| hotkey_matches(&state.pressed_keys, &profile.hotkey))
+                .cloned();
+
+            if let Some(profile) = matched_profile {
+                state.active_profile_id = Some(profile.id.clone());
+                let _ = app.emit("talkpro://record-start", profile.id);
             }
         };
 
@@ -338,10 +370,86 @@ fn start_modifier_hotkey_listener(app: AppHandle) {
     });
 }
 
-fn default_primary_modifier_down(control_down: bool, meta_down: bool) -> bool {
-    if cfg!(target_os = "macos") {
-        meta_down
-    } else {
-        control_down
+fn hotkey_matches(pressed_keys: &HashSet<Key>, hotkey: &str) -> bool {
+    let mut required_non_modifier: Vec<Key> = Vec::new();
+
+    for token in hotkey.split('+').map(|part| part.trim().to_lowercase()) {
+        match token.as_str() {
+            "ctrl" | "control" if !modifier_down(pressed_keys, Key::ControlLeft, Key::ControlRight) => return false,
+            "alt" | "option" if !modifier_down(pressed_keys, Key::Alt, Key::AltGr) => return false,
+            "shift" if !modifier_down(pressed_keys, Key::ShiftLeft, Key::ShiftRight) => return false,
+            "cmd" | "command" | "meta" if !modifier_down(pressed_keys, Key::MetaLeft, Key::MetaRight) => return false,
+            "ctrl" | "control" | "alt" | "option" | "shift" | "cmd" | "command" | "meta" => {}
+            _ => {
+                if let Some(key) = key_from_token(&token) {
+                    required_non_modifier.push(key);
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+
+    !required_non_modifier.is_empty()
+        && required_non_modifier
+            .iter()
+            .all(|key| pressed_keys.contains(key))
+}
+
+fn modifier_down(pressed_keys: &HashSet<Key>, left: Key, right: Key) -> bool {
+    pressed_keys.contains(&left) || pressed_keys.contains(&right)
+}
+
+fn key_from_token(token: &str) -> Option<Key> {
+    match token {
+        "a" => Some(Key::KeyA),
+        "b" => Some(Key::KeyB),
+        "c" => Some(Key::KeyC),
+        "d" => Some(Key::KeyD),
+        "e" => Some(Key::KeyE),
+        "f" => Some(Key::KeyF),
+        "g" => Some(Key::KeyG),
+        "h" => Some(Key::KeyH),
+        "i" => Some(Key::KeyI),
+        "j" => Some(Key::KeyJ),
+        "k" => Some(Key::KeyK),
+        "l" => Some(Key::KeyL),
+        "m" => Some(Key::KeyM),
+        "n" => Some(Key::KeyN),
+        "o" => Some(Key::KeyO),
+        "p" => Some(Key::KeyP),
+        "q" => Some(Key::KeyQ),
+        "r" => Some(Key::KeyR),
+        "s" => Some(Key::KeyS),
+        "t" => Some(Key::KeyT),
+        "u" => Some(Key::KeyU),
+        "v" => Some(Key::KeyV),
+        "w" => Some(Key::KeyW),
+        "x" => Some(Key::KeyX),
+        "y" => Some(Key::KeyY),
+        "z" => Some(Key::KeyZ),
+        "0" => Some(Key::Num0),
+        "1" => Some(Key::Num1),
+        "2" => Some(Key::Num2),
+        "3" => Some(Key::Num3),
+        "4" => Some(Key::Num4),
+        "5" => Some(Key::Num5),
+        "6" => Some(Key::Num6),
+        "7" => Some(Key::Num7),
+        "8" => Some(Key::Num8),
+        "9" => Some(Key::Num9),
+        "f1" => Some(Key::F1),
+        "f2" => Some(Key::F2),
+        "f3" => Some(Key::F3),
+        "f4" => Some(Key::F4),
+        "f5" => Some(Key::F5),
+        "f6" => Some(Key::F6),
+        "f7" => Some(Key::F7),
+        "f8" => Some(Key::F8),
+        "f9" => Some(Key::F9),
+        "f10" => Some(Key::F10),
+        "f11" => Some(Key::F11),
+        "f12" => Some(Key::F12),
+        _ => None,
     }
 }

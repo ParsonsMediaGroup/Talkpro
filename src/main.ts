@@ -18,6 +18,19 @@ type AppSettings = {
   dictationMode: "ai" | "local";
   onboardingComplete: boolean;
   createDesktopShortcut: boolean;
+  activeProfileId: string;
+  profiles: DictationProfile[];
+  transcriptionModel: string;
+  improveWithAi: boolean;
+  improvementModel: string;
+  improvementPrompt: string;
+  vocabulary: string;
+};
+
+type DictationProfile = {
+  id: string;
+  name: string;
+  hotkey: string;
   transcriptionModel: string;
   improveWithAi: boolean;
   improvementModel: string;
@@ -67,6 +80,29 @@ const defaultSettings: AppSettings = {
   dictationMode: "ai",
   onboardingComplete: false,
   createDesktopShortcut: true,
+  activeProfileId: "default",
+  profiles: [
+    {
+      id: "default",
+      name: "Default",
+      hotkey: defaultHotkey(),
+      transcriptionModel: "gpt-4o-transcribe",
+      improveWithAi: true,
+      improvementModel: "gpt-4o-mini",
+      improvementPrompt: DEFAULT_PROMPT,
+      vocabulary: "SSH, API, URL, JSON, GitHub, Tauri, OpenAI, TalkPro"
+    },
+    {
+      id: "code",
+      name: "Codebase",
+      hotkey: defaultSecondaryHotkey(),
+      transcriptionModel: "gpt-4o-transcribe",
+      improveWithAi: true,
+      improvementModel: "gpt-4o-mini",
+      improvementPrompt: `${DEFAULT_PROMPT} Format the result as a concise engineering note. Preserve code symbols, commands, filenames, branches, package names, and acronyms exactly.`,
+      vocabulary: "SSH, API, JSON, TypeScript, Rust, Tauri, GitHub Actions, npm, cargo, README, src-tauri"
+    }
+  ],
   transcriptionModel: "gpt-4o-transcribe",
   improveWithAi: true,
   improvementModel: "gpt-4o-mini",
@@ -152,6 +188,22 @@ function renderHome() {
           <span>AI improve</span>
         </label>
         <div class="field">
+          <label for="profile-select">Dictation profile</label>
+          <select id="profile-select" data-profile-select></select>
+        </div>
+        <div class="profile-actions">
+          <button class="text-button" data-add-profile type="button">Add Profile</button>
+        </div>
+        <div class="field">
+          <label for="profile-name">Profile name</label>
+          <input id="profile-name" data-profile-name type="text" />
+        </div>
+        <div class="field">
+          <label for="profile-hotkey">Profile hotkey</label>
+          <input id="profile-hotkey" data-profile-hotkey type="text" placeholder="Ctrl+Alt+1" />
+          <small>For Razer/Logitech M keys, map M1-M5 in Synapse or G HUB to shortcuts like Ctrl+Alt+1, then bind those here.</small>
+        </div>
+        <div class="field">
           <label for="improvement-model">Improve model</label>
           <input id="improvement-model" data-improvement-model type="text" />
         </div>
@@ -200,11 +252,16 @@ function renderHome() {
   const improvementModelInput = must<HTMLInputElement>("[data-improvement-model]");
   const improvementPromptInput = must<HTMLTextAreaElement>("[data-improvement-prompt]");
   const vocabularyInput = must<HTMLTextAreaElement>("[data-vocabulary]");
+  const profileSelect = must<HTMLSelectElement>("[data-profile-select]");
+  const addProfileButton = must<HTMLButtonElement>("[data-add-profile]");
+  const profileNameInput = must<HTMLInputElement>("[data-profile-name]");
+  const profileHotkeyInput = must<HTMLInputElement>("[data-profile-hotkey]");
 
   hydrateHomeSettings(settings);
   renderHotkeyLabel(hotkeyLabel);
   renderHomeWizard(settings);
   renderHistory(historyNode);
+  void registerProfileHotkeys(settings);
 
   clearButton.addEventListener("click", () => {
     writeHistory([]);
@@ -220,9 +277,38 @@ function renderHome() {
     }, 1200);
   });
 
-  [dictationModeSelect, apiKeyInput, transcriptionModelSelect, improveToggle, improvementModelInput, vocabularyInput, improvementPromptInput].forEach(
+  [dictationModeSelect, apiKeyInput, profileNameInput, profileHotkeyInput, transcriptionModelSelect, improveToggle, improvementModelInput, vocabularyInput, improvementPromptInput].forEach(
     (element) => element.addEventListener("input", persistSettingsFromForm)
   );
+
+  profileSelect.addEventListener("change", () => {
+    const current = readSettings();
+    const next: AppSettings = {
+      ...current,
+      activeProfileId: profileSelect.value
+    };
+    writeSettings(next);
+    hydrateHomeSettings(next);
+  });
+
+  addProfileButton.addEventListener("click", () => {
+    const current = readSettings();
+    const profileNumber = current.profiles.length + 1;
+    const profile: DictationProfile = {
+      ...activeProfile(current),
+      id: crypto.randomUUID(),
+      name: `Profile ${profileNumber}`,
+      hotkey: defaultProfileHotkey(profileNumber)
+    };
+    const next: AppSettings = {
+      ...current,
+      activeProfileId: profile.id,
+      profiles: [...current.profiles, profile]
+    };
+    writeSettings(next);
+    hydrateHomeSettings(next);
+    void registerProfileHotkeys(next);
+  });
 
   modeChoiceButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -252,27 +338,47 @@ function renderHome() {
   });
 
   function hydrateHomeSettings(next: AppSettings) {
+    const profile = activeProfile(next);
     dictationModeSelect.value = next.dictationMode;
     apiKeyInput.value = next.apiKey;
-    transcriptionModelSelect.value = next.transcriptionModel;
-    improveToggle.checked = next.improveWithAi;
-    improvementModelInput.value = next.improvementModel;
-    vocabularyInput.value = next.vocabulary;
-    improvementPromptInput.value = next.improvementPrompt;
+    profileSelect.innerHTML = next.profiles
+      .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} - ${escapeHtml(item.hotkey)}</option>`)
+      .join("");
+    profileSelect.value = profile.id;
+    profileNameInput.value = profile.name;
+    profileHotkeyInput.value = profile.hotkey;
+    transcriptionModelSelect.value = profile.transcriptionModel;
+    improveToggle.checked = profile.improveWithAi;
+    improvementModelInput.value = profile.improvementModel;
+    vocabularyInput.value = profile.vocabulary;
+    improvementPromptInput.value = profile.improvementPrompt;
   }
 
   function persistSettingsFromForm() {
     const current = readSettings();
-    writeSettings({
+    const selectedProfileId = profileSelect.value || current.activeProfileId;
+    const profiles = current.profiles.map((profile) => profile.id === selectedProfileId
+      ? {
+          ...profile,
+          name: profileNameInput.value || "Untitled",
+          hotkey: normalizeHotkey(profileHotkeyInput.value),
+          transcriptionModel: transcriptionModelSelect.value,
+          improveWithAi: improveToggle.checked,
+          improvementModel: improvementModelInput.value,
+          vocabulary: vocabularyInput.value,
+          improvementPrompt: improvementPromptInput.value
+        }
+      : profile);
+    const next: AppSettings = {
       ...current,
       apiKey: apiKeyInput.value,
       dictationMode: dictationModeSelect.value === "local" ? "local" : "ai",
-      transcriptionModel: transcriptionModelSelect.value,
-      improveWithAi: improveToggle.checked,
-      improvementModel: improvementModelInput.value,
-      vocabulary: vocabularyInput.value,
-      improvementPrompt: improvementPromptInput.value
-    });
+      activeProfileId: selectedProfileId,
+      profiles
+    };
+    writeSettings(next);
+    hydrateHomeSettings(next);
+    void registerProfileHotkeys(next);
   }
 
   function renderHomeWizard(next: AppSettings) {
@@ -316,9 +422,11 @@ function renderDock() {
   let localInterimTranscript = "";
   let localRecognitionEndResolver: (() => void) | null = null;
   let isRecording = false;
+  let currentProfileId = readSettings().activeProfileId;
 
   void restoreDockPosition();
   drawIdleWaveform();
+  void registerProfileHotkeys(readSettings());
 
   dragButton.addEventListener("mousedown", async () => {
     await currentWindow.startDragging();
@@ -331,18 +439,20 @@ function renderDock() {
     await main?.setFocus();
   });
 
-  void listen("talkpro://record-start", () => {
-    void startDictation();
+  void listen<string>("talkpro://record-start", (event) => {
+    void startDictation(event.payload);
   });
 
   void listen("talkpro://record-stop", () => {
     void stopDictation();
   });
 
-  async function startDictation() {
+  async function startDictation(profileId: string) {
     if (isRecording) return;
 
     const settings = readSettings();
+    const profile = activeProfile(settings, profileId);
+    currentProfileId = profile.id;
     await restoreDockPosition();
     await currentWindow.show();
     setDockLoading(false);
@@ -356,7 +466,7 @@ function renderDock() {
     isRecording = true;
     audioChunks = [];
     transcriptNode.textContent = "";
-    dockTitleNode.textContent = "Listening";
+    dockTitleNode.textContent = profile.name;
 
     try {
       if (settings.dictationMode === "local") {
@@ -376,6 +486,7 @@ function renderDock() {
     if (!isRecording) return;
 
     const settings = readSettings();
+    const profile = activeProfile(settings, currentProfileId);
     isRecording = false;
     dockTitleNode.textContent = "Finishing";
     await delay(POST_RELEASE_CAPTURE_MS);
@@ -383,7 +494,7 @@ function renderDock() {
     if (settings.dictationMode === "local") {
       const text = normalizeTranscript(await stopLocalRecognition());
       stopWaveform();
-      await pasteAndRemember(text, text, false, "local-system-speech");
+      await pasteAndRemember(text, text, false, `${profile.name} / local`);
       return;
     }
 
@@ -396,7 +507,7 @@ function renderDock() {
     try {
       dockTitleNode.textContent = "Transcribing";
       setDockLoading(true);
-      const rawText = normalizeTranscript(await transcribeAudio(audioBlob, settings));
+      const rawText = normalizeTranscript(await transcribeAudio(audioBlob, settings, profile));
       if (!rawText) {
         setDockLoading(false);
         finishDock("No speech");
@@ -405,15 +516,15 @@ function renderDock() {
 
       let finalText = rawText;
       let improved = false;
-      if (settings.improveWithAi) {
+      if (profile.improveWithAi) {
         dockTitleNode.textContent = "Improving";
         transcriptNode.textContent = "Applying your dictation improvement prompt...";
-        finalText = normalizeTranscript(await improveText(rawText, settings));
+        finalText = normalizeTranscript(await improveText(rawText, settings, profile));
         improved = finalText !== rawText;
       }
 
       setDockLoading(false);
-      await pasteAndRemember(rawText, finalText, improved, settings.transcriptionModel);
+      await pasteAndRemember(rawText, finalText, improved, `${profile.name} / ${profile.transcriptionModel}`);
     } catch (error) {
       setDockLoading(false);
       dockTitleNode.textContent = "Error";
@@ -627,12 +738,12 @@ function renderDock() {
   }
 }
 
-async function transcribeAudio(audioBlob: Blob, settings: AppSettings) {
+async function transcribeAudio(audioBlob: Blob, settings: AppSettings, profile: DictationProfile) {
   const audioBase64 = await blobToBase64(audioBlob);
   return await invoke<string>("transcribe_audio", {
     request: {
       apiKey: settings.apiKey.trim(),
-      model: settings.transcriptionModel,
+      model: profile.transcriptionModel,
       audioBase64,
       fileName: `talkpro-${Date.now()}.${extensionForMime(audioBlob.type)}`,
       mimeType: audioBlob.type || "audio/webm"
@@ -640,16 +751,16 @@ async function transcribeAudio(audioBlob: Blob, settings: AppSettings) {
   });
 }
 
-async function improveText(text: string, settings: AppSettings) {
-  const vocabulary = settings.vocabulary.trim()
-    ? `\n\nUser vocabulary and acronym list:\n${settings.vocabulary.trim()}`
+async function improveText(text: string, settings: AppSettings, profile: DictationProfile) {
+  const vocabulary = profile.vocabulary.trim()
+    ? `\n\nUser vocabulary and acronym list:\n${profile.vocabulary.trim()}`
     : "";
 
   return await invoke<string>("improve_text", {
     request: {
       apiKey: settings.apiKey.trim(),
-      model: settings.improvementModel.trim() || defaultSettings.improvementModel,
-      prompt: `${settings.improvementPrompt.trim() || DEFAULT_PROMPT}${vocabulary}`,
+      model: profile.improvementModel.trim() || defaultSettings.profiles[0].improvementModel,
+      prompt: `${profile.improvementPrompt.trim() || DEFAULT_PROMPT}${vocabulary}`,
       text
     }
   });
@@ -680,8 +791,10 @@ function renderHistory(historyNode: HTMLOListElement) {
 }
 
 function renderHotkeyLabel(node: HTMLElement) {
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  node.innerHTML = isMac ? "<kbd>Command</kbd> + <kbd>Option</kbd>" : "<kbd>Ctrl</kbd> + <kbd>Alt</kbd>";
+  const settings = readSettings();
+  node.innerHTML = settings.profiles
+    .map((profile) => `<kbd>${escapeHtml(profile.name)}</kbd> ${escapeHtml(profile.hotkey)}`)
+    .join(" ");
 }
 
 function readHistory(): DictationEntry[] {
@@ -700,7 +813,7 @@ function writeHistory(history: DictationEntry[]) {
 function readSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    return raw ? { ...defaultSettings, ...JSON.parse(raw) as Partial<AppSettings> } : defaultSettings;
+    return migrateSettings(raw ? { ...defaultSettings, ...JSON.parse(raw) as Partial<AppSettings> } : defaultSettings);
   } catch {
     return defaultSettings;
   }
@@ -708,6 +821,65 @@ function readSettings(): AppSettings {
 
 function writeSettings(settings: AppSettings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function migrateSettings(settings: AppSettings): AppSettings {
+  if (settings.profiles?.length) {
+    return settings;
+  }
+
+  const profile: DictationProfile = {
+    id: "default",
+    name: "Default",
+    hotkey: defaultHotkey(),
+    transcriptionModel: settings.transcriptionModel,
+    improveWithAi: settings.improveWithAi,
+    improvementModel: settings.improvementModel,
+    improvementPrompt: settings.improvementPrompt,
+    vocabulary: settings.vocabulary
+  };
+
+  return {
+    ...settings,
+    activeProfileId: profile.id,
+    profiles: [profile]
+  };
+}
+
+function activeProfile(settings: AppSettings, profileId = settings.activeProfileId) {
+  return settings.profiles.find((profile) => profile.id === profileId)
+    ?? settings.profiles[0]
+    ?? defaultSettings.profiles[0];
+}
+
+async function registerProfileHotkeys(settings: AppSettings) {
+  await invoke("register_hotkeys", {
+    profiles: settings.profiles.map((profile) => ({
+      id: profile.id,
+      hotkey: normalizeHotkey(profile.hotkey)
+    }))
+  });
+}
+
+function normalizeHotkey(value: string) {
+  return value
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("+");
+}
+
+function defaultHotkey() {
+  return navigator.platform.toLowerCase().includes("mac") ? "Command+Option+1" : "Ctrl+Alt+1";
+}
+
+function defaultSecondaryHotkey() {
+  return navigator.platform.toLowerCase().includes("mac") ? "Command+Option+2" : "Ctrl+Alt+2";
+}
+
+function defaultProfileHotkey(profileNumber: number) {
+  const key = Math.min(Math.max(profileNumber, 1), 9);
+  return navigator.platform.toLowerCase().includes("mac") ? `Command+Option+${key}` : `Ctrl+Alt+${key}`;
 }
 
 function chooseMimeType() {
