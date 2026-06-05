@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "TalkPro",
-        "width": 460,
+        "width": 720,
         "height": 720,
+        "minWidth": 620,
+        "minHeight": 520,
         "resizable": true,
         "decorations": true,
         "alwaysOnTop": false

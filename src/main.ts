@@ -750,6 +750,7 @@ function renderDock() {
   let localInterimTranscript = "";
   let localRecognitionEndResolver: (() => void) | null = null;
   let isRecording = false;
+  let isFinishingDictation = false;
   let recordingStartedAt = 0;
   let currentProfileId = readSettings().activeProfileId;
   let dragState: {
@@ -886,7 +887,10 @@ function renderDock() {
   });
 
   async function startDictation(profileId: string) {
-    if (isRecording) return;
+    if (isRecording || isFinishingDictation) {
+      void logClientEvent(`record-start ignored profile=${profileId} recording=${isRecording} finishing=${isFinishingDictation}`);
+      return;
+    }
 
     const settings = readSettings();
     const profile = activeProfile(settings, profileId);
@@ -940,28 +944,32 @@ function renderDock() {
     const dictationMode = profile.dictationMode ?? settings.dictationMode;
     void logClientEvent(`record-stop event profile=${profile.id}`);
     isRecording = false;
+    isFinishingDictation = true;
     dockTitleNode.textContent = "Finishing";
-    await delay(POST_RELEASE_CAPTURE_MS);
-
-    if (dictationMode === "local") {
-      const text = normalizeTranscript(await stopLocalRecognition());
-        stopWaveform();
-      await pasteAndRemember(text, text, false, `${profile.name} / local`, 0);
-      return;
-    }
-
-    const audioBlob = await stopAudioCapture();
-    if (!audioBlob || audioBlob.size === 0) {
-      finishDock("No audio");
-      return;
-    }
-
     try {
+      await delay(POST_RELEASE_CAPTURE_MS);
+
+      if (dictationMode === "local") {
+        const text = normalizeTranscript(await stopLocalRecognition());
+        stopWaveform();
+        void logClientEvent(`local dictation text_len=${text.length}`);
+        await pasteAndRemember(text, text, false, `${profile.name} / local`, 0);
+        return;
+      }
+
+      const audioBlob = await stopAudioCapture();
+      void logClientEvent(`audio capture stopped size=${audioBlob?.size ?? 0} type=${audioBlob?.type ?? "none"}`);
+      if (!audioBlob || audioBlob.size === 0) {
+        finishDock("No audio");
+        return;
+      }
+
       dockTitleNode.textContent = "Transcribing";
       setDockLoading(true);
       const durationSeconds = recordingStartedAt ? Math.max((performance.now() - recordingStartedAt) / 1000, 0) : undefined;
       let estimatedCostUsd = estimateTranscriptionCost(profile.transcriptionModel, durationSeconds);
       const rawText = normalizeTranscript(await transcribeAudio(audioBlob, settings, profile, durationSeconds));
+      void logClientEvent(`transcription ok text_len=${rawText.length}`);
       if (!hasUsableDictation(rawText)) {
         setDockLoading(false);
         finishDock("No speech");
@@ -974,6 +982,7 @@ function renderDock() {
         dockTitleNode.textContent = "Improving";
         transcriptNode.textContent = "Applying your dictation improvement prompt...";
         finalText = normalizeTranscript(await improveText(rawText, settings, profile));
+        void logClientEvent(`improvement ok text_len=${finalText.length}`);
         improved = finalText !== rawText;
         estimatedCostUsd += estimateImprovementCost(profile.improvementModel, rawText, finalText, profile.improvementPrompt, profile.vocabulary);
       }
@@ -984,6 +993,9 @@ function renderDock() {
       setDockLoading(false);
       dockTitleNode.textContent = "Error";
       transcriptNode.textContent = error instanceof Error ? error.message : "Dictation failed.";
+      void logClientEvent(`stopDictation error=${transcriptNode.textContent}`);
+    } finally {
+      isFinishingDictation = false;
     }
   }
 

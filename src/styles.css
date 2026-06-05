@@ -676,7 +676,7 @@ h2 {
 }
 
 body:not(.dock-body) {
-  min-width: 320px;
+  min-width: 620px;
   min-height: 420px;
   background: #090d12;
   color: #e7edf3;
@@ -715,6 +715,8 @@ body:not(.dock-body) small {
 }
 
 body:not(.dock-body) .shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
   gap: 14px;
@@ -753,10 +755,10 @@ body:not(.dock-body) .status {
   display: grid;
   grid-template-columns: repeat(5, minmax(96px, 1fr));
   gap: 6px;
-  overflow-x: auto;
+  min-width: 0;
+  overflow: hidden;
   border-bottom: 1px solid #1c2a36;
   padding-bottom: 8px;
-  scrollbar-color: #3a5062 #0c1219;
 }
 
 .tab {
@@ -876,10 +878,6 @@ body:not(.dock-body) .panel-heading {
 }
 
 @media (max-width: 720px) {
-  .tabs {
-    grid-template-columns: repeat(5, 104px);
-  }
-
   .profile-subtabs {
     grid-template-columns: repeat(3, 120px);
   }
