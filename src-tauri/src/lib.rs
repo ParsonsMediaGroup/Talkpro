@@ -83,6 +83,16 @@ struct ClientLogRequest {
     message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitorWorkArea {
+    id: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenAiTranscription {
     text: String,
@@ -266,6 +276,11 @@ fn diagnostics_log_path() -> String {
 }
 
 #[tauri::command]
+fn foreground_monitor_work_area() -> Option<MonitorWorkArea> {
+    foreground_monitor_work_area_impl()
+}
+
+#[tauri::command]
 fn save_history_export(json: String) -> Result<String, String> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -320,6 +335,61 @@ fn create_desktop_shortcut() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_run_on_login(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let exe = std::env::current_exe()
+            .map_err(|error| format!("Unable to resolve TalkPro executable: {error}"))?;
+        let exe_value = format!("\"{}\"", escape_powershell_path(&exe));
+        let script = if enabled {
+            format!(
+                "New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'TalkPro' -Value '{}' -PropertyType String -Force | Out-Null",
+                exe_value
+            )
+        } else {
+            "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'TalkPro' -ErrorAction SilentlyContinue".to_string()
+        };
+
+        run_powershell(&script, "Unable to update startup setting")?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_run_on_login() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'TalkPro' -ErrorAction SilentlyContinue).TalkPro",
+            ])
+            .output()
+            .map_err(|error| format!("Unable to read startup setting: {error}"))?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        return Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 fn register_hotkeys(profiles: Vec<HotkeyProfile>, state: tauri::State<Arc<Mutex<HotkeyState>>>) {
     append_log(format!(
         "register_hotkeys {}",
@@ -356,9 +426,12 @@ pub fn run() {
             improve_text,
             save_history_export,
             create_desktop_shortcut,
+            set_run_on_login,
+            get_run_on_login,
             register_hotkeys,
             log_client_event,
-            diagnostics_log_path
+            diagnostics_log_path,
+            foreground_monitor_work_area
         ])
         .setup(|app| {
             append_log("app setup");
@@ -373,6 +446,20 @@ pub fn run() {
 #[cfg(target_os = "windows")]
 fn escape_powershell_path(path: impl AsRef<std::path::Path>) -> String {
     path.as_ref().to_string_lossy().replace('\'', "''")
+}
+
+#[cfg(target_os = "windows")]
+fn run_powershell(script: &str, context: &str) -> Result<(), String> {
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .output()
+        .map_err(|error| format!("{context}: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
 }
 
 fn create_tray_icon(app: &mut tauri::App) -> tauri::Result<()> {
@@ -732,6 +819,57 @@ fn diagnostics_log_file() -> PathBuf {
     let _ = fs::create_dir_all(&dir);
     dir.push("talkpro.log");
     dir
+}
+
+#[cfg(target_os = "windows")]
+fn foreground_monitor_work_area_impl() -> Option<MonitorWorkArea> {
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground.is_null() {
+            return None;
+        }
+
+        let monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null() {
+            return None;
+        }
+
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            rcMonitor: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            rcWork: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            dwFlags: 0,
+        };
+
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+
+        let work = info.rcWork;
+        let monitor_rect = info.rcMonitor;
+        Some(MonitorWorkArea {
+            id: format!(
+                "{}:{}:{}:{}",
+                monitor_rect.left,
+                monitor_rect.top,
+                monitor_rect.right - monitor_rect.left,
+                monitor_rect.bottom - monitor_rect.top
+            ),
+            x: work.left,
+            y: work.top,
+            width: work.right - work.left,
+            height: work.bottom - work.top,
+        })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn foreground_monitor_work_area_impl() -> Option<MonitorWorkArea> {
+    None
 }
 
 fn append_log(message: impl AsRef<str>) {

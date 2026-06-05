@@ -308,13 +308,18 @@ body:not(.dock-body) .danger-button {
 }
 
 .profile-subtabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(112px, 1fr));
   grid-column: 1 / -1;
   gap: 6px;
   overflow-x: auto;
 }
 
 .profile-subtab {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid #2c3d4d;
   border-radius: 7px;
   background: #101821;
@@ -323,6 +328,8 @@ body:not(.dock-body) .danger-button {
   font-size: 13px;
   font-weight: 750;
   padding: 8px 10px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .profile-subtab.is-active {
@@ -743,7 +750,8 @@ body:not(.dock-body) .status {
 }
 
 .tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(96px, 1fr));
   gap: 6px;
   overflow-x: auto;
   border-bottom: 1px solid #1c2a36;
@@ -752,7 +760,11 @@ body:not(.dock-body) .status {
 }
 
 .tab {
-  flex: 0 0 auto;
+  display: inline-flex;
+  min-width: 96px;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -761,6 +773,8 @@ body:not(.dock-body) .status {
   font-size: 13px;
   font-weight: 750;
   padding: 8px 11px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .tab:hover {
@@ -862,6 +876,14 @@ body:not(.dock-body) .panel-heading {
 }
 
 @media (max-width: 720px) {
+  .tabs {
+    grid-template-columns: repeat(5, 104px);
+  }
+
+  .profile-subtabs {
+    grid-template-columns: repeat(3, 120px);
+  }
+
   body:not(.dock-body) .topbar {
     align-items: flex-start;
     flex-direction: column;

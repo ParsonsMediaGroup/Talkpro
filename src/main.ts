@@ -14,6 +14,14 @@ type DictationEntry = {
   estimatedCostUsd?: number;
 };
 
+type MonitorWorkArea = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type AppSettings = {
   settingsVersion: number;
   apiKey: string;
@@ -74,6 +82,7 @@ declare global {
 const HISTORY_KEY = "talkpro.dictationHistory.v2";
 const SETTINGS_KEY = "talkpro.settings.v1";
 const DOCK_POSITION_KEY = "talkpro.dockPosition.v1";
+const DOCK_MONITOR_POSITIONS_KEY = "talkpro.dockMonitorPositions.v1";
 const POST_RELEASE_CAPTURE_MS = 450;
 const LEGACY_DEFAULT_PROMPT =
   "Clean up this dictated text for accuracy, punctuation, capitalization, and readability. Use the user's vocabulary and context to preserve product names, codebase terms, file names, issue IDs, commands, APIs, acronyms, and technical wording. Expand spoken acronym phrases into uppercase acronyms when appropriate, for example \"S S H\" or \"secure shell\" can become \"SSH\", \"A P I\" can become \"API\", and \"U R L\" can become \"URL\". Do not invent facts. Return only the improved text.";
@@ -312,6 +321,10 @@ function renderHome() {
           <input id="api-key" data-api-key type="password" autocomplete="off" placeholder="sk-..." />
           <small>Stored only in local app settings on this computer. Open-source builds never include a key.</small>
         </div>
+        <label class="toggle setting-toggle">
+          <input data-run-on-login type="checkbox" />
+          <span>Run TalkPro when I log in</span>
+        </label>
         <div class="macro-help">
           <strong>Advanced macro setup</strong>
           <span>M1-M5 keys usually need to be assigned in Synapse, G HUB, Stream Deck, or your keyboard software first. Set them to normal shortcuts, then use the same shortcut in each TalkPro profile.</span>
@@ -353,6 +366,7 @@ function renderHome() {
   const exportButton = must<HTMLButtonElement>("[data-export]");
   const dictationModeSelect = must<HTMLSelectElement>("[data-dictation-mode]");
   const apiKeyInput = must<HTMLInputElement>("[data-api-key]");
+  const runOnLoginInput = must<HTMLInputElement>("[data-run-on-login]");
   const profileDictationModeSelect = must<HTMLSelectElement>("[data-profile-dictation-mode]");
   const transcriptionModelSelect = must<HTMLSelectElement>("[data-transcription-model]");
   const improveToggle = must<HTMLInputElement>("[data-improve-toggle]");
@@ -379,6 +393,7 @@ function renderHome() {
   renderHomeWizard(settings);
   renderHistory(historyNode);
   renderCostSummary(costSummaryNode, settings);
+  void hydrateRunOnLogin(runOnLoginInput);
   void registerProfileHotkeys(settings);
 
   clearButton.addEventListener("click", () => {
@@ -411,6 +426,18 @@ function renderHome() {
   [dictationModeSelect, apiKeyInput, profileNameInput, profileHotkeyInput, profileDictationModeSelect, transcriptionModelSelect, improveToggle, improvementModelInput, vocabularyInput, improvementPromptInput].forEach(
     (element) => element.addEventListener("input", () => persistSettingsFromForm(element === profileHotkeyInput))
   );
+
+  runOnLoginInput.addEventListener("change", async () => {
+    const enabled = runOnLoginInput.checked;
+    try {
+      await invoke("set_run_on_login", { enabled });
+      statusNode.textContent = enabled ? "Starts on login" : "Login start off";
+    } catch (error) {
+      runOnLoginInput.checked = !enabled;
+      statusNode.textContent = "Startup update failed";
+      void logClientEvent(`run_on_login error=${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
 
   profileSelect.addEventListener("change", () => {
     const current = readSettings();
@@ -866,8 +893,8 @@ function renderDock() {
     const dictationMode = profile.dictationMode ?? settings.dictationMode;
     void logClientEvent(`record-start event profile=${profileId} resolved=${profile.id} mode=${dictationMode}`);
     currentProfileId = profile.id;
-    void restoreDockPositionOrCenter().catch((error) => {
-      void logClientEvent(`dock restore/show position failed=${error instanceof Error ? error.message : String(error)}`);
+    void positionDockForForegroundMonitor().catch((error) => {
+      void logClientEvent(`dock follow screen failed=${error instanceof Error ? error.message : String(error)}`);
     });
     void currentWindow.show().catch((error) => {
       void logClientEvent(`dock show failed=${error instanceof Error ? error.message : String(error)}`);
@@ -1181,6 +1208,25 @@ function renderDock() {
     }
   }
 
+  async function positionDockForForegroundMonitor() {
+    const workArea = await invoke<MonitorWorkArea | null>("foreground_monitor_work_area");
+    if (!workArea) {
+      await positionDockBottomCenter();
+      return;
+    }
+
+    const saved = readDockMonitorPositions()[workArea.id];
+    if (saved) {
+      await currentWindow.setPosition(new LogicalPosition(saved.x, saved.y));
+      return;
+    }
+
+    const factor = await currentWindow.scaleFactor();
+    const logicalX = (workArea.x + (workArea.width - 300) / 2) / factor;
+    const logicalY = (workArea.y + workArea.height - 52) / factor;
+    await currentWindow.setPosition(new LogicalPosition(logicalX, logicalY));
+  }
+
   async function restoreDockPositionOrCenter() {
     const restored = await restoreDockPosition();
     if (!restored) {
@@ -1206,6 +1252,28 @@ function renderDock() {
     const factor = await currentWindow.scaleFactor();
     const logical = position.toLogical(factor);
     localStorage.setItem(DOCK_POSITION_KEY, JSON.stringify({ x: logical.x, y: logical.y }));
+
+    try {
+      const size = await currentWindow.outerSize();
+      const centerX = position.x + Math.round(size.width / 2);
+      const centerY = position.y + Math.round(size.height / 2);
+      const monitor = await monitorFromPoint(centerX, centerY);
+      if (!monitor) return;
+      const monitorId = `${monitor.position.x}:${monitor.position.y}:${monitor.size.width}:${monitor.size.height}`;
+      const positions = readDockMonitorPositions();
+      positions[monitorId] = { x: logical.x, y: logical.y };
+      localStorage.setItem(DOCK_MONITOR_POSITIONS_KEY, JSON.stringify(positions));
+    } catch {
+      // Per-monitor position persistence is best effort.
+    }
+  }
+}
+
+function readDockMonitorPositions() {
+  try {
+    return JSON.parse(localStorage.getItem(DOCK_MONITOR_POSITIONS_KEY) ?? "{}") as Record<string, { x: number; y: number }>;
+  } catch {
+    return {};
   }
 }
 
@@ -1414,6 +1482,14 @@ async function hydrateDiagnosticsPath(node: HTMLElement) {
     node.textContent = `Diagnostics log: ${path}`;
   } catch {
     node.textContent = "Diagnostics log unavailable.";
+  }
+}
+
+async function hydrateRunOnLogin(input: HTMLInputElement) {
+  try {
+    input.checked = await invoke<boolean>("get_run_on_login");
+  } catch {
+    input.checked = false;
   }
 }
 
