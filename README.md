@@ -30,6 +30,36 @@ AI improvement prompts are intended for project-specific context, such as:
 
 The improvement prompt runs after transcription and before clipboard/paste/history.
 
+## Profile Examples
+
+Profiles let each hotkey behave like a different dictation assistant. A user can hold one hotkey for normal writing, another for codebase-aware notes, another for translation, and another for polished email replies.
+
+Example profile setup:
+
+| Profile | Hotkey | Prompt idea |
+| --- | --- | --- |
+| Default | `Ctrl+Alt` | Clean up punctuation and capitalization. Preserve the speaker's meaning. Return only the improved text. |
+| Spanish Translator | `Ctrl+Alt+1` | Translate everything I dictate from English into natural Spanish. Keep names, numbers, product terms, and code terms unchanged unless translation is clearly appropriate. Return only Spanish text. |
+| Email Writer | `Ctrl+Alt+2` | Rewrite my dictation as a clear, professional email. Keep it concise, polite, and action-oriented. Add a subject line only if I ask for one. |
+| Codebase Notes | `Ctrl+Alt+3` | Format my dictation as an engineering note. Preserve file paths, branch names, commands, functions, APIs, acronyms, and ticket IDs. Use the vocabulary and project context below. |
+| Support Persona | `Ctrl+Alt+4` | Rewrite my dictation as a helpful customer support reply. Keep it friendly, direct, and easy to understand. Do not overpromise. |
+| Executive Summary | `Ctrl+Alt+5` | Turn my dictation into a concise executive summary with decisions, blockers, and next steps. |
+
+More examples:
+
+- Translate dictated English into Spanish, French, or another language before pasting.
+- Create a "strict punctuation" profile for legal, operations, or documentation work.
+- Create a "casual voice" profile for chat messages.
+- Create a "support reply" profile that follows company tone and escalation rules.
+- Create a "codebase" profile that knows project names, common files, CLI commands, API names, branch formats, and internal acronyms from the profile prompt and vocabulary field.
+- Create persona-based profiles, such as concise, friendly, technical, executive, sales, or support.
+
+For codebase-specific dictation, put the relevant context directly in the profile prompt or vocabulary field, for example:
+
+```text
+This profile is for the TalkPro codebase. Preserve TypeScript, Rust, Tauri, src/main.ts, src-tauri/src/lib.rs, tauri.conf.json, npm, cargo, GitHub Actions, OpenAI, SSH, API, JSON, MSI, and NSIS. If I mention a file, keep the exact file path format when possible. Return only the cleaned-up text.
+```
+
 ## Macro Keys
 
 TalkPro hotkeys can be bound to shortcuts such as `Ctrl+Alt+1`, `Ctrl+Alt+2`, or `Command+Option+1`.
